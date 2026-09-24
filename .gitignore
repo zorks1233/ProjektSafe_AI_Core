@@ -1,4 +1,9 @@
-node_modules/
+# Python compiled files
+__pycache__/
+*.pyc
+
+# Sensitive keys and secrets
+data/*.keynode_modules/
 .next/
 dist/
 build/
