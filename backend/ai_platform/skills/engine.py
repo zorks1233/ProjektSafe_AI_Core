@@ -89,6 +89,11 @@ def _extract_math_expr(text: str) -> Optional[str]:
     t = text.replace(",", ".").replace("×", "*").replace("·", "*").replace("÷", "/")
     t = re.sub(r"\b(\d+(?:\.\d+)?)\s*%\s*von\b", r"(\1/100)*", t, flags=re.I)
     t = re.sub(r"\bquadratwurzel aus\b|\bsqrt von\b|√", "sqrt", t, flags=re.I)
+    t = t.replace("\u2212", "-")          # unicode minus -> ascii
+    # percent: "% <digit>" is modulo; trailing "%" (percent sign) is dropped
+    t = re.sub(r"%(?=\s*\d)", "\x01", t)
+    t = t.rstrip().rstrip("%") + " "
+    t = t.replace("\x01", "%")
     t = re.sub(r"\bplus\b", "+", t, flags=re.I)
     t = re.sub(r"\bminus\b", "-", t, flags=re.I)
     t = re.sub(r"\b(mal|x)\b", "*", t, flags=re.I)
@@ -166,11 +171,11 @@ def skill_transform(text: str) -> Optional[str]:
             target = ma.group(1).strip()
     if not target:
         # 3) "rot13 von Hello" / "base64 codiere hello" – keyword, optional verb, payload to end
-        mb = re.search(r"(?:rot13|caesar\s*-?\d+|base64(?:\s+(?:kodier|encod|dekod|decod)\w*)?|hex(?:adezimal)?(?:\s+(?:kodier|umwandl|dekod|decod|convert)\w*)?)\s+(?:von|from|über|ueber|for)?\s*([A-Za-z0-9+/=._ -]{2,})$", text, re.I)
+        mb = re.search(r"(?:rot13|caesar\s*-?\d+|base64(?:\s+(?:kodier|encod|dekod|decod)\w*)?|hex(?:adezimal)?(?:\s+(?:kodier|umwandl|dekod|decod|convert)\w*)?|verschl[üu]ssel[ei]?\w*)(?:\s+(?:mit\s+-?\d+\s+f[üu]r|von|from|[üu]ber|ueber|for))?\s*[:=]?\s*([A-Za-z0-9+/=._ -]{2,})$", text, re.I)
         if mb:
             target = mb.group(1).strip(" :")
     if not target:
-        mc = re.search(r"(?:umgekehrt|reverse)\s*(?:den\s+text|text)?\s*[:=]?\s*(.+)$", text, re.I)
+        mc = re.search(r"(?:(?:kehre|drehe)\s+)?(?:den\s+)?(?:text|string)?\s*(?:umgekehrt|um|reverse)\s*(?:den\s+text|text)?\s*[:=]?\s*(.+)$", text, re.I)
         if mc:
             target = mc.group(1).strip()
     if not target:
@@ -220,10 +225,16 @@ _ROMAN_MAP = [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90
 
 
 def skill_roman(text: str) -> Optional[str]:
+    m = re.search(r"(?:\d{1,4}|[ivxlcdm]{1,15})\s+in\s+r[öo]misch(?:e)?\s+zahl", text, re.I)
+    if m:
+        mv = re.search(r"(\d{1,4}|[ivxlcdm]{1,15})\s+in\s+r[öo]misch", text, re.I)
+        return skill_roman(f"römische Zahl {mv.group(1)}") if mv else None
     m = re.search(r"römische[nz]?\s+zahlen?(?:\s+(?:umwandeln|umrechen|übersetz|konvertier)\w*)?[:\-]?\s*(\d{1,4}|[ivxlcdm]{1,15})\b", text, re.I)
     if not m:
+        m = re.search(r"(?:umwandeln?|umrechnen?|konvertieren?|übersetzen?)\s+(?:in\s+)?römische\s+zahl\S*\s*(\d{1,4}|[ivxlcdm]{1,15})", text, re.I)
+    if not m:
         # reverse direction: "Wandle MCMXCIV in eine römische Zahl / Zahl um"
-        m = re.search(r"(?:wandle|konvertiere|übersetze)\s+(M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))[a-z]*\s+in\s+eine\s+zahl", text, re.I)
+        m = re.search(r"(?:wandle|konvertiere|übersetze)\s+(M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))[a-z]*\s+in\s+(?:eine\s+)?(zahl|römische)", text, re.I)
     if not m or not m.group(1):
         return None
     val = m.group(1)
@@ -296,10 +307,11 @@ def _bmi_answer(kg: int, cm: int) -> Optional[str]:
 
 
 def skill_password(text: str) -> Optional[str]:
-    m = re.search(r"(passwort|password|zufallspasswort).{0,20}?(\d{1,3})?\s*(zeichen|character|lang|length)?", text, re.I)
+    mlen = re.search(r"(\d{1,3})\s*(?:zeichen|characters?)", text, re.I)
+    m = re.search(r"(passwort|password|zufallspasswort)(.{0,30}?)(\d{1,3})?\s*(zeichen|character|lang|length)?", text, re.I)
     if not m or not re.search(r"(generier|erzeug|erstelle|create|generate|vorschlag)", text, re.I):
         return None
-    length = max(8, min(int(m.group(2) or 20), 64))
+    length = max(8, min(int((mlen.group(1) if mlen else (m.group(3) or "")) or 20), 64))
     alpha = string.ascii_letters + string.digits + "!@#$%^&*()-_=+[]{}"
     pw = "".join(secrets.choice(alpha) for _ in range(length))
     entropy = length * math.log2(len(alpha))
@@ -307,7 +319,9 @@ def skill_password(text: str) -> Optional[str]:
 
 
 def skill_regex(text: str) -> Optional[str]:
-    m = re.search(r"regex.*?/(.+)/.*?(?:auf|against|test)\s*(?:den\s+text)?[:：]?\s*(.+)", text, re.I | re.S)
+    m = re.search(r"regex[^/]*(/.+?)/[^\w\s]*\s*(?:(?:auf|gegen|against|test(?:e|et)?(?:\s+den)?(?:\s+text)?)[\s:：]*)?(.+)", text, re.I | re.S)
+    if not m:
+        m = re.search(r"(?:teste|test)\s+(?:eine\s+|den\s+)?regex\s+(.+?)\s+(?:auf|gegen|against)\s+(?:den\s+text\s*[:：]?\s*)?(.+)", text, re.I | re.S)
     if not m:
         return None
     pat, sample = m.group(1), m.group(2)
@@ -414,7 +428,7 @@ _SEED: list[LearnedSkill] = [
                   "Guten Tag! Ich bin startklar – Text, Bild, Audio, Video, 3D, Code oder Tools."]),
     LearnedSkill("greet_en", "greeting", re.compile(r"^(hello|hi|hey|good\s+(morning|evening|afternoon))\b", re.I),
                  ["Hello! How can I help you today?", "Hey there! What shall we work on?"], lang="en"),
-    LearnedSkill("thanks_de", "thanks", re.compile(r"\b(danke\s*de?s?n?|danke\b|thank\s?you|vielen\s+danke|besten\s+dank|danesch|thx)\b", re.I),
+    LearnedSkill("thanks_de", "thanks", re.compile(r"\b(danke?|danken?n?|thank\s?you(s)?|besten\s+dank|danesch|thx|merci)\b|vielen\s+danke?n?", re.I),
                  ["Gern geschehen! Wenn du mehr brauchst, einfach fragen.",
                   "Kein Problem – dafür bin ich da 🙂",
                   "Bitte schön! Soll ich noch etwas vertiefen?"]),
@@ -512,7 +526,11 @@ class SkillEngine:
     # ---- answering --------------------------------------------------------
     def respond(self, text: str) -> Optional[str]:
         sk = self.match(text)
-        if sk and self.should_handle(text, sk):
+        if not sk:
+            return None
+        # user-taught skills always answer directly (explicit user intent);
+        # seeded conversational skills only for short social messages.
+        if sk.intent == "user-taught" or self.should_handle(text, sk):
             return sk.pick()
         return None
 
@@ -542,8 +560,9 @@ class SkillEngine:
         cleaned = re.sub(r"^wenn\s+", "", cleaned, flags=re.I)
         cleaned = re.sub(r"^(?:jemand|user)\s+", "", cleaned, flags=re.I)
         cleaned = re.sub(r"\s+(?:sagt|schreibt|fragt|nimmt|verwendet|eingibt)[!?.]*$", "", cleaned, flags=re.I)
-        cleaned = cleaned.strip(" ?!.:,;\u201e\u201c\u201d\u2018\u2019\")
+        cleaned = cleaned.strip(" ?!.:,;\u201e\u201c\u201d\u2018\u2019")
         cleaned = re.sub(r'[\u201e\u201c\u201d\u2018\u2019"\']([^\u201e\u201c\u201d\u2018\u2019"\']*)[\u201e\u201c\u201d\u2018\u2019"\']?', r'\1', cleaned)
+        cleaned = re.sub(r"^(?:jemand|wer|user)\s+", "", cleaned, flags=re.I)
         cleaned = re.sub(r"^(?:ich|du|der user|mein user)\s+", "", cleaned, flags=re.I)
         cleaned = re.sub(r"[,;]\s*(?:sag(?:e|t|st)?|dann)\s+$", "", cleaned, flags=re.I)
         if len(cleaned) < 2 or len(response) < 3:
@@ -567,13 +586,14 @@ class SkillEngine:
         r"(.{2,120}?)\s*(?:(?:sag(?:e|t|st)|schreib(?:e|t|st)|frag(?:e|t|st)?)[,.]\s*)?"
         r"(?:dann\s+|antworte\s+mit\s+|→|->)\s*"
         r"[\"„'`“]?(.{2,400}?)[\"“'”“]?!?\.?\s*$", re.I)
-        r"[\"„'`“]?(.{2,400}?)[\"“'”“]?!?\.?\s*$", re.I)
 
     def try_teach_from_message(self, text: str) -> Optional[str]:
         m = self._TEACH_RX.search(text.strip())
         if not m:
             return None
-        return self.teach(m.group(1), m.group(2))
+        response = re.sub(r"^(?:sag(?:e|t|st)?|antwort(?:e|e)?|antworte|reply)\s+(?:mit|with)?\s*", "", m.group(2).strip(), flags=re.I)
+        response = re.sub(r'^[\u201e\u201c\u201d\u2018\u2019"\']+|[\u201e\u201c\u201d\u2018\u2019"\']+$', '', response).strip()
+        return self.teach(m.group(1), response)
 
     # ---- feedback (online optimisation) ------------------------------------
     def feedback(self, ref: str, good: bool) -> Optional[float]:
