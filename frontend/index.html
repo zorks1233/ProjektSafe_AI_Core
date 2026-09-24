@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SafeAI – Chat</title>
+<link rel="stylesheet" href="css/styles.css"/>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>"/>
+</head>
+<body>
+<div id="app">
+
+  <!-- ============ SIDEBAR ============ -->
+  <nav id="sidebar" class="sidebar">
+    <div class="sidebar-top">
+      <button id="btn-new-chat" class="side-btn primary" title="Neuer Chat">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        <span>Neuer Chat</span>
+      </button>
+      <button id="btn-search" class="side-btn" title="Chats durchsuchen">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <span>Suchen</span>
+      </button>
+      <div id="search-box" class="search-box hidden">
+        <input id="search-input" type="text" placeholder="Chats durchsuchen…" autocomplete="off"/>
+      </div>
+      <button id="btn-plugins" class="side-btn" title="Plugins &amp; Erweiterungen">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h6V4h4v3h6v4h-3v4h-4v-4H8v4H4z"/></svg>
+        <span>Plugins</span>
+      </button>
+      <button id="btn-skills" class="side-btn" title="Skills der KI">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l2.4 7.4H22l-6 4.6 2.3 7.4-6.3-4.6-6.3 4.6L8 14 2 9.4h7.6z"/></svg>
+        <span>Skills</span>
+      </button>
+    </div>
+
+    <div class="sidebar-mid">
+      <div class="history-label">Verlauf</div>
+      <div id="session-list" class="session-list"></div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <button id="btn-upgrade" class="side-btn upgrade">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
+        <span>Auf Plus upgraden</span><small>Testversion</small>
+      </button>
+      <button id="btn-user" class="user-row">
+        <span class="avatar" id="user-avatar">?</span>
+        <span class="user-email" id="user-email">…</span>
+        <span class="chev">⋯</span>
+      </button>
+    </div>
+  </nav>
+  <div id="scrim" class="scrim hidden"></div>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <header class="topbar">
+      <button id="btn-menu" class="icon-btn" title="Sidebar">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <select id="model-select" class="model-select" title="Modell wählen"></select>
+      <button id="btn-local" class="chip" title="Nur lokale Modelle verwenden">🔒 Lokal</button>
+      <div class="spacer"></div>
+      <div id="res-pill" class="res-pill" title="Ressourcen-Monitor">CPU – · RAM –</div>
+    </header>
+
+    <section id="chat-area" class="chat-area">
+      <div id="welcome" class="welcome">
+        <div class="welcome-logo">🛡️</div>
+        <h1>Womit kann ich helfen?</h1>
+        <div class="suggestions">
+          <button class="sug-card" data-prompt="Berechne 17*23+4"><b>🧮 Rechnen</b><span>Berechne 17*23+4</span></button>
+          <button class="sug-card" data-prompt="Schreibe einen Python-Code für eine schnelle Sortierung"><b>💻 Code</b><span>QuickSort in Python</span></button>
+          <button class="sug-card" data-prompt="Merke dir: wenn ich „Hallo“ sage, antworte mit „Moin Moin!“"><b>✨ Skill beibringen</b><span>„Wenn Hallo → Moin Moin“</span></button>
+          <button class="sug-card" data-prompt="Wandle die Farbe #10a37f in RGB um"><b>🎨 Umwandeln</b><span>#10a37f → RGB</span></button>
+        </div>
+      </div>
+      <div id="messages" class="messages"></div>
+    </section>
+
+    <footer class="composer-wrap">
+      <div id="attach-strip" class="attach-strip hidden"></div>
+      <div class="composer">
+        <button id="btn-attach" class="icon-btn" title="Datei anhängen (Bild/Audio/Video/3D)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <textarea id="prompt" class="prompt" rows="1" maxlength="50000"
+          placeholder="Sichere SafeAI etwas mitteilen …"></textarea>
+        <button id="btn-send" class="send-btn" title="Senden (Enter)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        </button>
+        <button id="btn-stop" class="send-btn stop hidden" title="Antwort stoppen">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        </button>
+      </div>
+      <div class="disclaimer">SafeAI kann Fehler machen. Fertige Daten werden verschlüsselt gespeichert.</div>
+    </footer>
+  </main>
+
+  <!-- ============ MODALS ============ -->
+  <div id="modal-auth" class="modal hidden">
+    <div class="modal-card auth-card">
+      <div class="auth-logo">🛡️ SafeAI</div>
+      <div class="auth-tabs">
+        <button id="tab-login" class="auth-tab active">Anmelden</button>
+        <button id="tab-register" class="auth-tab">Registrieren</button>
+      </div>
+      <form id="auth-form" autocomplete="on">
+        <input id="auth-email" type="email" placeholder="E-Mail" required autocomplete="email"/>
+        <input id="auth-pass" type="password" placeholder="Passwort (mind. 8 Zeichen)" required minlength="8" autocomplete="current-password"/>
+        <button type="submit" class="primary-btn" id="auth-submit">Anmelden</button>
+        <div id="auth-error" class="auth-error"></div>
+      </form>
+    </div>
+  </div>
+
+  <div id="modal-skills" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h2>⚡ Skills &amp; Gedächtnis</h2><button class="icon-btn modal-close" data-close="modal-skills">✕</button></div>
+      <div id="skills-body" class="modal-body"></div>
+      <div class="teach-box">
+        <h3>Neue Fähigkeit beibringen</h3>
+        <input id="teach-trigger" placeholder="Auslöser (z. B. guten Morgen)"/>
+        <input id="teach-response" placeholder="Antwort (z. B. Sonniger Gruß zurück!)"/>
+        <button id="btn-teach" class="primary-btn">Speichern</button>
+        <div id="teach-msg" class="auth-error"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-plugins" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><h2>🔌 Plugins</h2><button class="icon-btn modal-close" data-close="modal-plugins">✕</button></div>
+      <div id="plugins-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="ctx-menu" class="ctx-menu hidden"></div>
+  <input type="file" id="file-input" multiple hidden accept="*/*"/>
+  <div id="toast" class="toast hidden"></div>
+</div>
+
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
