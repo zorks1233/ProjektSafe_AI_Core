@@ -1,0 +1,29 @@
+# ============================================================
+# ProjektSafe AI Core – Backend-Abhängigkeiten (Python 3.11+)
+# Install:  pip install -r backend/requirements.txt
+# ============================================================
+
+# Web-Framework & Server
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.20
+sse-starlette==2.4.1
+
+# Konfiguration & Validierung
+pydantic==2.11.7
+pydantic-settings==2.10.1
+
+# Datenbank
+SQLAlchemy==2.0.54
+
+# Verschlüsselung (DB-Layer, JWT-HS256, Skill-Store)
+cryptography==45.0.5
+
+# Multimodale Pipelines (Bild/Audio/Video/3D)
+numpy==2.3.1
+
+# Externe Cloud-APIs / Plugins
+httpx==0.28.1
+
+# Tests (für Entwicklung; für reinen Betrieb optional)
+pytest==9.1.1

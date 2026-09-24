@@ -1,1 +1,6 @@
 __pycache__/
+*.pyc
+
+# Sensitive keys
+data/db.key
+data/jwt.key
