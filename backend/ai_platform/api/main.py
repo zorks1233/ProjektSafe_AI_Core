@@ -496,6 +496,8 @@ async def health():
 
 
 # ------------------------- static frontend -------------------------
-FRONTEND_DIR = BASE_DIR / "frontend"
-if FRONTEND_DIR.exists():
+# candidate locations: repo root /frontend (dev layout) and package-adjacent
+FRONTEND_CANDIDATES = [BASE_DIR / "frontend", Path(__file__).resolve().parents[2] / "frontend"]
+FRONTEND_DIR = next((p for p in FRONTEND_CANDIDATES if (p / "index.html").exists()), None)
+if FRONTEND_DIR:
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

@@ -94,7 +94,7 @@ def _extract_math_expr(text: str) -> Optional[str]:
     t = re.sub(r"\b(mal|x)\b", "*", t, flags=re.I)
     t = re.sub(r"\b(durch|geteilt durch)\b", "/", t, flags=re.I)
     t = re.sub(r"\bhoch\b|\^", "**", t, flags=re.I)
-    # function-style expression first: sqrt(144), round(pi, 2) �
+    # function-style expression first: sqrt(144), round(pi, 2)
     m = None
     if re.search(r"(sqrt|sin|cos|tan|log|log10|abs|round|min|max|floor|ceil|exp)\s*\(", t, re.I):
         m = re.search(r"[a-z]+\s*\((?:[^()]|\([^()]*\))*\)", t, re.I)
@@ -540,8 +540,12 @@ class SkillEngine:
         """Explicitly teach a new skill ('merke dir: wenn X dann Y')."""
         cleaned = re.sub(r"[^ -~äöüÄÖÜß]", "", trigger).strip()
         cleaned = re.sub(r"^wenn\s+", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"^(?:jemand|user)\s+", "", cleaned, flags=re.I)
         cleaned = re.sub(r"\s+(?:sagt|schreibt|fragt|nimmt|verwendet|eingibt)[!?.]*$", "", cleaned, flags=re.I)
-        cleaned = cleaned.strip(" ?!.:,;")
+        cleaned = cleaned.strip(" ?!.:,;\u201e\u201c\u201d\u2018\u2019\")
+        cleaned = re.sub(r'[\u201e\u201c\u201d\u2018\u2019"\']([^\u201e\u201c\u201d\u2018\u2019"\']*)[\u201e\u201c\u201d\u2018\u2019"\']?', r'\1', cleaned)
+        cleaned = re.sub(r"^(?:ich|du|der user|mein user)\s+", "", cleaned, flags=re.I)
+        cleaned = re.sub(r"[,;]\s*(?:sag(?:e|t|st)?|dann)\s+$", "", cleaned, flags=re.I)
         if len(cleaned) < 2 or len(response) < 3:
             raise ValueError("Trigger/Antwort zu kurz")
         # build a token-flexible pattern: each word may carry an inflection suffix
@@ -558,7 +562,12 @@ class SkillEngine:
             self.learned_count += 1
         return key
 
-    _TEACH_RX = re.compile(r"(?:merke|remember|lerne|learn)\s*(?:dir|dich)?\s*[::]?\s*(?:dass\s*)?(?:wenn\s+)?(.{3,120}?)\s*(?:dann\s+|antworte\s+mit\s+|→|->)\s*[\"'„“]?(.{3,400})[\"'„“]?$", re.I)
+    _TEACH_RX = re.compile(
+        r"(?:merke|remember|lerne|learn)\s*(?:dir|dich)?\s*[::]?\s*(?:dass\s*)?(?:wenn\s+)?"
+        r"(.{2,120}?)\s*(?:(?:sag(?:e|t|st)|schreib(?:e|t|st)|frag(?:e|t|st)?)[,.]\s*)?"
+        r"(?:dann\s+|antworte\s+mit\s+|→|->)\s*"
+        r"[\"„'`“]?(.{2,400}?)[\"“'”“]?!?\.?\s*$", re.I)
+        r"[\"„'`“]?(.{2,400}?)[\"“'”“]?!?\.?\s*$", re.I)
 
     def try_teach_from_message(self, text: str) -> Optional[str]:
         m = self._TEACH_RX.search(text.strip())
