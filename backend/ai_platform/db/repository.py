@@ -7,7 +7,7 @@ from typing import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .models import ChatSession, Message, SecurityEvent, User, utcnow
+from .models import ChatSession, Message, SecurityEvent, SkillStore, User, utcnow
 
 
 class Repo:
@@ -83,6 +83,19 @@ class Repo:
         return [{"id": r.id, "severity": r.severity, "category": r.category,
                  "detail": r.detail, "source_ip": r.source_ip, "created_at": r.created_at.isoformat()}
                 for r in rows]
+
+    # encrypted key/value store (learned skills, preferences) ------------------
+    def get_setting(self, key: str) -> str | None:
+        row = self.db.scalar(select(SkillStore).where(SkillStore.key == key))
+        return row.value if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        row = self.db.scalar(select(SkillStore).where(SkillStore.key == key))
+        if row is None:
+            row = SkillStore(key=key)
+            self.db.add(row)
+        row.value = value
+        self.db.commit()
 
 
 def _enc_json(obj: dict) -> bytes:

@@ -132,6 +132,24 @@ class Message(Base):
         self.content_enc = crypto.encrypt(value)
 
 
+class SkillStore(Base):
+    """Encrypted key/value store for learned skills & preferences."""
+    __tablename__ = "skill_store"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    value_enc: Mapped[bytes] = mapped_column(LargeBinary)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    @property
+    def value(self) -> str:
+        return crypto.decrypt(self.value_enc)
+
+    @value.setter
+    def value(self, v: str) -> None:
+        self.value_enc = crypto.encrypt(v)
+
+
 class SecurityEvent(Base):
     __tablename__ = "security_events"
 

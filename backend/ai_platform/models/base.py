@@ -90,6 +90,14 @@ class LocalEngine(BaseBackend):
     def _respond(self, prompt: str, history: list[dict]) -> str:
         p = prompt.strip()
         low = p.lower()
+        # learned conversational skills (greetings/thanks/smalltalk) first
+        try:
+            from ..skills.engine import skill_engine
+            learned = skill_engine.respond(p)
+            if learned:
+                return learned
+        except Exception:
+            pass
         if self._CODE_RX.search(low):
             return self._code_answer(p)
         if self._MATH_RX.search(low):
@@ -109,25 +117,36 @@ class LocalEngine(BaseBackend):
 
     def _code_answer(self, p: str) -> str:
         lang = "python"
-        if "javascript" in p.lower() or " js " in p.lower():
+        if "javascript" in p.lower() or " js " in p.lower() or "typescript" in p.lower():
             lang = "javascript"
         if "sql" in p.lower():
             lang = "sql"
         fn = re.search(r"`([^`]{1,60})`|(\b([a-zA-Z_][\w]*)\b)(?=\s*(?:funktion|function))", p, re.I)
         name = (fn.group(1) or fn.group(3)) if fn else "loesung"
         name = re.sub(r"\W+", "_", name).strip("_").lower() or "loesung"
+        doc = p[:160].replace(chr(10), " ")
         if lang == "python":
-            body = (f"```python\ndef {name}(*args, **kwargs):\n"
-                    f'    """{p[:160].replace(chr(10), " ")}"""\n'
-                    f"    # Lokaler Engine-Entwurf – mit angebundenem LLM wird\n"
-                    f"    # hier echtes Code-Generierungsrouting verwendet.\n"
-                    f"    raise NotImplementedError('Bitte Modell-Layer verbinden')\n```")
+            body = (f"```python\nfrom __future__ import annotations\n\n"
+                    f"def {name}(daten):\n"
+                    f'    """{doc}"""\n'
+                    f"    ergebnis = []\n"
+                    f"    for eintrag in daten:\n"
+                    f"        ergebnis.append(eintrag)   # Platzhalter-Logik ersetzen\n"
+                    f"    return ergebnis\n\n"
+                    f"if __name__ == '__main__':\n"
+                    f"    print({name}([1, 2, 3]))\n```")
         elif lang == "sql":
-            body = f"```sql\n-- Anfrage zu: {p[:120]}\nSELECT * FROM tabelle WHERE bedingung = TRUE LIMIT 100;\n```"
+            mt = re.search("(?:tabelle|table)[ \\t]+[A-Za-z_][A-Za-z0-9_]*", p, re.I)
+            t = mt.group(0).split()[-1] if mt else "tabelle"
+            body = ("```sql\n-- Anfrage zu: " + p[:120] + "\n"
+                    f"SELECT *\nFROM {t}\nWHERE 1 = 1\nORDER BY id DESC\nLIMIT 100;\n```")
         else:
-            body = (f"```javascript\nfunction {name}(...args) {{\n  // Entwurf der lokalen Engine\n"
-                    f"  throw new Error('LLM-Backend verbinden');\n}}\n```")
-        return f"Code-Entwurf ({lang}):\n\n{body}"
+            body = (f"```javascript\n/**\n * {doc}\n */\nfunction {name}(daten) {{\n"
+                    f"  return Array.from(daten);   // Platzhalter-Logik ersetzen\n}}\n\n"
+                    f"console.log({name}([1, 2, 3]));\n```")
+        return ("Code-Entwurf aus der lokalen Kern-Engine (lauffähiges Grundgerüst):\n\n" + body +
+                "\n\nHinweis: Mit angebundenem Cloud-/LLM-Modell wird diese Anfrage automatisch "
+                "an das stärkste verfügbare Code-Modell geroutet und vollständig ausformuliert.")
 
     def _math_answer(self, p: str) -> str | None:
         expr = re.search(r"(\d+(?:\.\d+)?)\s*([\+\-\*/×÷])\s*(\d+(?:\.\d+)?)", p)

@@ -39,6 +39,7 @@ from ..security.abuse import abuse_detector, rate_limiter
 from ..security.auth import AuthError, create_token, verify_token
 from ..security.filters import request_filter
 from ..sessions.manager import Turn, context_window, memory_graph
+from ..skills.engine import skill_engine
 
 SYSTEM_PROMPT = (
     "Du bist die KI-Plattform-Assistentin. Antworte präzise, strukturiert und "
@@ -54,6 +55,11 @@ async def lifespan(app: FastAPI):
     init_db()
     resource_monitor.start()
     plugin_manager.discover_builtin()
+    db0 = SessionLocal()
+    try:
+        skill_engine.load_state(Repo(db0))
+    finally:
+        db0.close()
     yield
     resource_monitor.stop()
 
@@ -158,7 +164,7 @@ async def login(request: Request, db: Session = Depends(get_db)):
     password = str(body.get("password", ""))
     user = Repo(db).get_user_by_email(email)
     # constant-time-ish: always run a hash even for unknown users
-    from .db.models import hash_password, verify_password
+    from ..db.models import hash_password, verify_password
     if not user or not verify_password(password, user.password_hash or hash_password("x")):
         raise HTTPException(401, "Zugangsdaten ungültig")
     token = create_token(user.id, user.email, user.is_admin)
@@ -261,52 +267,120 @@ async def _prepare(request: Request, db: Session, user) -> tuple[RouteRequest, o
     mem_block = memory_graph.context_block(user.id, content)
     if mem_block:
         sys_prompt += "\n\n" + mem_block
+    skill_block = skill_engine.context_block(user.id)
+    if skill_block:
+        sys_prompt += "\n\n[Skill-Gedächtnis]\n" + skill_block
     msgs = context_window.build_messages(sys_prompt, history)
 
     req = RouteRequest(messages=msgs, modalities=modality_set,
                        preferred_model=str(body.get("model", "auto")),
                        force_local=bool(body.get("local_only", False)),
                        task_complexity=_complexity(content))
-    return req, (repo, session, content, attach_meta)
+    return req, (repo, session, content, attach_meta, user)
 
 
 @app.post("/api/chat")
 async def chat(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
-    req, (repo, session, content, attach_meta) = await _prepare(request, db, user)
+    req, (repo, session, content, attach_meta, usr) = await _prepare(request, db, user)
     t0 = time.perf_counter()
+
+    # ---- skill layer: explicit teaching, learned conversational replies,
+    #      deterministic task skills (math/text/crypto/date…) ------------------
+    skill_reply: str | None = None
+    skill_ref: str | None = None
+    taught = skill_engine.try_teach_from_message(content)
+    if taught:
+        skill_reply, skill_ref = f"Fertig – neue Fähigkeit „{taught}“ wurde gelernt und verschlüsselt gespeichert.", taught
+        skill_engine.save_state(repo)
+    elif not attach_meta:
+        if (resp := skill_engine.respond(content)) is not None:
+            sk = skill_engine.match(content)
+            skill_reply = resp
+            skill_ref = sk.key if sk else None
+            skill_engine.learn_preference(user.id, content)
+            skill_engine.save_state(repo)
+        elif (task := skill_engine.try_task_skill(content)) is not None:
+            skill_reply = task[1]
+            skill_ref = f"task:{task[0]}"
+
+    if skill_reply is not None:
+        result_model = f"skill-engine ({skill_ref})"
+        text = skill_reply
+        meta = {"skill": skill_ref, "engine": "skill-layer"}
+        tokens_in = sum(len(m["content"]) for m in req.messages) // 4
+        tokens_out = len(text) // 4
+        latency = (time.perf_counter() - t0) * 1000
+        repo.add_message(session, "user", content, model_used="skill",
+                         tokens_in=tokens_in,
+                         attachments={"files": attach_meta} if attach_meta else None)
+        msg = repo.add_message(session, "assistant", text, model_used=result_model,
+                               tokens_out=tokens_out, latency_ms=latency)
+        memory_graph.ingest(user.id, content)
+        return {"session_id": session.public_id, "reply": text, "model": result_model,
+                "meta": {**meta, "feedback_ref": skill_ref or f"{result_model}:{msg.id}"},
+                "latency_ms": round(latency)}
+
     result = await router.run(req)
     latency = (time.perf_counter() - t0) * 1000
     repo.add_message(session, "user", content, model_used=req.preferred_model,
                      tokens_in=result.tokens_in,
                      attachments={"files": attach_meta} if attach_meta else None)
-    repo.add_message(session, "assistant", result.text, model_used=result.model,
-                     tokens_out=result.tokens_out, latency_ms=latency)
+    msg = repo.add_message(session, "assistant", result.text, model_used=result.model,
+                           tokens_out=result.tokens_out, latency_ms=latency)
     memory_graph.ingest(user.id, content)
+    fb_ref = result.meta.get("feedback_ref") or f"{result.model}:{msg.id}"
     return {"session_id": session.public_id, "reply": result.text, "model": result.model,
-            "meta": result.meta, "latency_ms": round(latency)}
+            "meta": {**result.meta, "feedback_ref": fb_ref, "message_id": msg.id},
+            "latency_ms": round(latency)}
 
 
 @app.post("/api/chat/stream")
 async def chat_stream(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
-    req, (repo, session, content, attach_meta) = await _prepare(request, db, user)
+    req, (repo, session, content, attach_meta, usr) = await _prepare(request, db, user)
+
+    # skill fast-path: answer instantly without model round-trip
+    taught = skill_engine.try_teach_from_message(content)
+    skill_reply = None
+    skill_ref = None
+    if taught:
+        skill_reply, skill_ref = f"Fertig – neue Fähigkeit „{taught}“ wurde gelernt und verschlüsselt gespeichert.", taught
+        skill_engine.save_state(repo)
+    elif not attach_meta:
+        if (resp := skill_engine.respond(content)) is not None:
+            sk = skill_engine.match(content)
+            skill_reply, skill_ref = resp, sk.key if sk else None
+            skill_engine.learn_preference(user.id, content)
+            skill_engine.save_state(repo)
+        elif (task := skill_engine.try_task_skill(content)) is not None:
+            skill_reply, skill_ref = task[1], f"task:{task[0]}"
+
     repo.add_message(session, "user", content,
                      attachments={"files": attach_meta} if attach_meta else None)
 
     async def event_gen():
         collected: list[str] = []
         t0 = time.perf_counter()
-        try:
-            async for chunk in router.stream_dispatch(req):
+        model_tag = "stream"
+        if skill_reply is not None:
+            model_tag = f"skill-engine ({skill_ref})"
+            for i in range(0, len(skill_reply), 24):
+                chunk = skill_reply[i:i + 24]
                 collected.append(chunk)
                 yield f"data: {json.dumps({'c': chunk})}\n\n"
-        except Exception as exc:
-            yield f"data: {json.dumps({'error': str(exc)[:200]})}\n\n"
+        else:
+            try:
+                async for chunk in router.stream_dispatch(req):
+                    collected.append(chunk)
+                    yield f"data: {json.dumps({'c': chunk})}\n\n"
+            except Exception as exc:
+                yield f"data: {json.dumps({'error': str(exc)[:200]})}\n\n"
         text = "".join(collected)
         latency = (time.perf_counter() - t0) * 1000
-        repo.add_message(session, "assistant", text or "(leer)",
-                         model_used="stream", latency_ms=latency)
+        msg = repo.add_message(session, "assistant", text or "(leer)",
+                               model_used=model_tag, latency_ms=latency)
         memory_graph.ingest(user.id, content)
-        yield f"data: {json.dumps({'done': True, 'session_id': session.public_id})}\n\n"
+        fb = skill_ref or f"{model_tag}:{msg.id}"
+        yield f"data: {json.dumps({'done': True, 'session_id': session.public_id, 'message_id': msg.id, 'feedback_ref': fb})}\n\n"
 
     return StreamingResponse(event_gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -356,6 +430,37 @@ async def invoke_plugin(request: Request, user=Depends(current_user), db: Sessio
 @app.post("/api/plugins/reload")
 async def reload_plugins(user=Depends(current_user)):
     return plugin_manager.reload()
+
+
+# ------------------------- skills & feedback -------------------------
+@app.get("/api/skills")
+async def list_skills(user=Depends(current_user)):
+    return skill_engine.describe()
+
+
+@app.post("/api/skills/teach")
+async def teach_skill(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+    body = await request.json()
+    trigger = str(body.get("trigger", ""))[:200]
+    response = str(body.get("response", ""))[:600]
+    _guard_text(trigger + " " + response, request, db)
+    try:
+        key = skill_engine.teach(trigger, response)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    skill_engine.save_state(Repo(db))
+    return {"ok": True, "key": key}
+
+
+@app.post("/api/feedback")
+async def message_feedback(request: Request, user=Depends(current_user), db: Session = Depends(get_db)):
+    """👍/👎 on an answer – the online learner optimises skill confidence."""
+    body = await request.json()
+    ref = str(body.get("ref", ""))[:120]
+    good = bool(body.get("good", False))
+    score = skill_engine.feedback(ref, good)
+    Repo(db).log_security_event("low", "feedback", f"ref={ref} good={good} score={score}", client_key(request))
+    return {"ok": True, "new_score": score}
 
 
 # ------------------------- system -------------------------
