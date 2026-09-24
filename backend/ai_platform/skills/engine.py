@@ -94,7 +94,12 @@ def _extract_math_expr(text: str) -> Optional[str]:
     t = re.sub(r"\b(mal|x)\b", "*", t, flags=re.I)
     t = re.sub(r"\b(durch|geteilt durch)\b", "/", t, flags=re.I)
     t = re.sub(r"\bhoch\b|\^", "**", t, flags=re.I)
-    m = re.search(r"[-+*/().,\d\s]*?\d+(?:\.\d+)?(?:\s*[-+*/^]\s*(?:[-+*/().,\d\s]*?\d+(?:\.\d+)?))+[-+*/().,\d\s%]*", t)
+    # function-style expression first: sqrt(144), round(pi, 2) �
+    m = None
+    if re.search(r"(sqrt|sin|cos|tan|log|log10|abs|round|min|max|floor|ceil|exp)\s*\(", t, re.I):
+        m = re.search(r"[a-z]+\s*\((?:[^()]|\([^()]*\))*\)", t, re.I)
+    if not m:
+        m = re.search(r"[-+*/().,\d\s]*?\d+(?:\.\d+)?(?:\s*[-+*/]\s*(?:[-+*/().,\d\s]*?\d+(?:\.\d+)?))+[-+*/().,\d\s%]*", t)
     return m.group(0) if m else None
 
 
@@ -115,10 +120,10 @@ def skill_math(text: str) -> Optional[str]:
 
 
 def skill_textstats(text: str) -> Optional[str]:
-    m = re.search(r"(?:wie viele|anzahl)\s*(wörter|zeichen|sätze|words|characters)", text, re.I)
+    m = re.search(r"(?:wie viele|z[äa]hle|count|anzahl)\s*(?:der\s+)?(w[öo]rter?|zeichen|s[äa]tze|words?|characters?)", text, re.I)
     if not m:
         return None
-    body = re.sub(r"^.*?(?:wie viele|anzahl)\s*\w+\s*(?:hat|enthält|in)?[:：]?\s*", "", text, count=1, flags=re.I)
+    body = re.sub(r"^.*?(?:wie viele|z[äa]hle|count|anzahl)\s*(?:der\s+)?\w+\s*(?:von|hat|enthält|in|für|:)?[:：]?\s*", "", text, count=1, flags=re.I)
     words = re.findall(r"\S+", body)
     chars = len(body.replace("\n", ""))
     sentences = len([s for s in re.split(r"[.!?]+", body) if s.strip()])
@@ -143,16 +148,35 @@ def skill_transform(text: str) -> Optional[str]:
     """rot13 / caesar / base64 / hex / reverse / upper / lower / titlecase."""
     low = text.lower()
     target = ""
-    mq = re.search(r'(?:für|for)\s*[„"\'](.+?)[”"\']', text)
-    if mq:
-        target = mq.group(1)
-    else:
-        kw = r"(?:rot13|caesar\s*-?\d*|base64|hex(?:adezimal)?|umgekehr\w*|reverse|grossbuchstaben|kleinbuchstaben|uppercase|lowercase)"
-        ma = re.search(kw + r"[a-zäöüß]*[- ]?(?:text|den|das|encode|decode|kodier\w*|dekod\w*|verschlüssel\w*)?\s*[:=]\s*(.+)"
-                       r"|(?:text|den|das)?\s*(?:umgekehrt|reversed)\s*[:=]?\s*(.+)"
-                       r"|" + kw + r"\s+(?:text|den|das)?\s*(.+)$", text, re.I | re.S)
+    # 1) explicit payload: quoted after a verb, or "… <verb>: X" to end of line
+    for m in re.finditer(r'[„"\'](.+?)[”"\']', text):
+        pre = text[:m.start()].lower()
+        if re.search(r"(kodier|dekod|encod|decod|umkehr|revers|verschlüssel|großschreib|grossschreib|kleinschreib|upper|lower|text für|für)", pre, re.I):
+            target = m.group(1)
+            break
+    if not target:
+        ma = re.search(r"(?:kodiere|dekodiere|encode|decode|verschüssele|umgekehrt|reversed|großschreibung|uppercase|lowercase|kleinschreibung)\s*[:=]\s*(.+)", text, re.I | re.S)
         if ma:
-            target = (ma.group(1) or ma.group(2) or "").strip()
+            target = ma.group(1).strip()
+    if not target:
+        kw = r"(?:rot13|caesar\s*-?\d*|base64|hex(?:adezimal)?|umgekehr\w*|reverse|grossbuchstaben|kleinbuchstaben|uppercase|lowercase)"
+        # 2) keyword with colon payload, e.g. "base64 kodiere: hello"
+        ma = re.search(kw + r"[a-zäöüß]*[- ]?(?:text|den|das|encode|decode|kodier\w*|dekod\w*|verschlüssel\w*)?\s*[:=]\s*(.+)", text, re.I | re.S)
+        if ma:
+            target = ma.group(1).strip()
+    if not target:
+        # 3) "rot13 von Hello" / "base64 codiere hello" – keyword, optional verb, payload to end
+        mb = re.search(r"(?:rot13|caesar\s*-?\d+|base64(?:\s+(?:kodier|encod|dekod|decod)\w*)?|hex(?:adezimal)?(?:\s+(?:kodier|umwandl|dekod|decod|convert)\w*)?)\s+(?:von|from|über|ueber|for)?\s*([A-Za-z0-9+/=._ -]{2,})$", text, re.I)
+        if mb:
+            target = mb.group(1).strip(" :")
+    if not target:
+        mc = re.search(r"(?:umgekehrt|reverse)\s*(?:den\s+text|text)?\s*[:=]?\s*(.+)$", text, re.I)
+        if mc:
+            target = mc.group(1).strip()
+    if not target:
+        md = re.search(r"(?:großschreibung|grossbuchstaben|uppercase|kleinschreibung|kleinbuchstaben|lowercase)[:=]?\s*(.+)$", text, re.I)
+        if md:
+            target = md.group(1).strip()
     if not target:
         return None
     if _ROT_RX.search(low):
@@ -196,8 +220,11 @@ _ROMAN_MAP = [(1000, "M"), (900, "CM"), (500, "D"), (400, "CD"), (100, "C"), (90
 
 
 def skill_roman(text: str) -> Optional[str]:
-    m = re.search(r"römische[nz]? Zahl\s*[:\-]?\s*(\d{1,4}|[ivxlcdm]{1,15})", text, re.I)
+    m = re.search(r"römische[nz]?\s+zahlen?(?:\s+(?:umwandeln|umrechen|übersetz|konvertier)\w*)?[:\-]?\s*(\d{1,4}|[ivxlcdm]{1,15})\b", text, re.I)
     if not m:
+        # reverse direction: "Wandle MCMXCIV in eine römische Zahl / Zahl um"
+        m = re.search(r"(?:wandle|konvertiere|übersetze)\s+(M{0,4}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3}))[a-z]*\s+in\s+eine\s+zahl", text, re.I)
+    if not m or not m.group(1):
         return None
     val = m.group(1)
     if val.isdigit():
@@ -252,10 +279,14 @@ def skill_datetime(text: str) -> Optional[str]:
 
 
 def skill_bmi(text: str) -> Optional[str]:
-    m = re.search(r"bmi.*?(\d{2,3})\s*(?:kg|kilo)?.*?(\d{2,3})\s*cm", text, re.I)
+    m = re.search(r"bmi.*?(\d{2,3}(?:[.,]\d+)?)\s*(?:kg|kilo)?\D{0,10}?(\d{2,3})\s*cm", text, re.I)
     if not m:
         return None
-    kg, cm = int(m.group(1)), int(m.group(2))
+    kg, cm = int(float(m.group(1).replace(",", "."))), int(m.group(2))
+    return _bmi_answer(kg, cm)
+
+
+def _bmi_answer(kg: int, cm: int) -> Optional[str]:
     if not (20 <= kg <= 400 and 100 <= cm <= 250):
         return "Plausible Werte bitte prüfen (kg 20–400, cm 100–250)."
     bmi = kg / ((cm / 100) ** 2)
@@ -276,7 +307,7 @@ def skill_password(text: str) -> Optional[str]:
 
 
 def skill_regex(text: str) -> Optional[str]:
-    m = re.search(r"regex.*?/(.+)/.*?(?:auf|against|test).*?[:：]\s*(.+)", text, re.I | re.S)
+    m = re.search(r"regex.*?/(.+)/.*?(?:auf|against|test)\s*(?:den\s+text)?[:：]?\s*(.+)", text, re.I | re.S)
     if not m:
         return None
     pat, sample = m.group(1), m.group(2)
@@ -292,6 +323,16 @@ def skill_table(text: str) -> Optional[str]:
     m = re.search(r"markdown.?tabelle|tabelle(?:\s+markdown)?", text, re.I)
     if not m:
         return None
+    # explicit column list: "mit Spalten Name, Alter" / "columns: A, B"
+    mc = re.search(r"(?:spalten|columns?)[:\s]+([^\n]{2,120})$", text, re.I)
+    if mc:
+        cols = [c.strip(" .:;") for c in re.split(r"[,;|]", mc.group(1)) if c.strip()]
+        cols = [c for c in cols if re.match(r"^[\wäöüÄÖÜß -]{1,30}$", c)][:8]
+        if len(cols) >= 2:
+            lines = ["| " + " | ".join(cols) + " |",
+                     "|" + "---|" * len(cols),
+                     "|" + "…|" * len(cols)]
+            return "\n".join(lines)
     items = re.findall(r"[;|]\s*([^;|]+?)(?=\s*[;|]|$)", text)
     rows = [i.strip() for i in items if i.strip()][:8]
     if len(rows) < 2:
@@ -307,11 +348,16 @@ def skill_table(text: str) -> Optional[str]:
 
 
 def skill_color(text: str) -> Optional[str]:
-    m = re.search(r"(hex|rgb|hsl).{0,12}?#?([0-9a-f]{6})\b|#{1}(?:#[0-9a-f]{6})\b", text, re.I)
-    mh = re.search(r"#([0-9a-fA-F]{6})", text)
-    if not mh or not re.search(r"(umrechn|convert|rgb|hsl)", text, re.I):
+    if not re.search(r"(umrechn|convert|nach\s+rgb|als\s+hex|hexcode|farbe)", text, re.I):
         return None
-    r, g, b = (int(mh.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+    mh = re.search(r"#([0-9a-fA-F]{6})\b", text)
+    mrgb = re.search(r"rgb\s*\(\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*[, ]\s*(\d{1,3})\s*\)", text, re.I)
+    if mh:
+        r, g, b = (int(mh.group(1)[i:i + 2], 16) for i in (0, 2, 4))
+    elif mrgb:
+        r, g, b = (min(255, int(v)) for v in mrgb.groups())
+    else:
+        return None
     mx, mn = max(r, g, b), min(r, g, b)
     l = (mx + mn) / 2 / 255
     if mx == mn:
@@ -326,7 +372,7 @@ def skill_color(text: str) -> Optional[str]:
         else:
             h = (r - g) / (mx - mn) + 4
         h *= 60
-    return f"`#{mh.group(1).upper()}` → RGB({r}, {g}, {b}) · HSL({h:.0f}°, {s * 100:.0f}%, {l * 100:.0f}%)"
+    return f"`#{r:02X}{g:02X}{b:02X}` → RGB({r}, {g}, {b}) · HSL({h:.0f}°, {s * 100:.0f}%, {l * 100:.0f}%)"
 
 
 TASK_SKILLS: list[tuple[str, str, callable]] = [
@@ -368,7 +414,7 @@ _SEED: list[LearnedSkill] = [
                   "Guten Tag! Ich bin startklar – Text, Bild, Audio, Video, 3D, Code oder Tools."]),
     LearnedSkill("greet_en", "greeting", re.compile(r"^(hello|hi|hey|good\s+(morning|evening|afternoon))\b", re.I),
                  ["Hello! How can I help you today?", "Hey there! What shall we work on?"], lang="en"),
-    LearnedSkill("thanks_de", "thanks", re.compile(r"\b(danke|thank\s?you|vielen\s+danke|besten\s+dank|danesch|thx)\b", re.I),
+    LearnedSkill("thanks_de", "thanks", re.compile(r"\b(danke\s*de?s?n?|danke\b|thank\s?you|vielen\s+danke|besten\s+dank|danesch|thx)\b", re.I),
                  ["Gern geschehen! Wenn du mehr brauchst, einfach fragen.",
                   "Kein Problem – dafür bin ich da 🙂",
                   "Bitte schön! Soll ich noch etwas vertiefen?"]),
@@ -388,7 +434,7 @@ _SEED: list[LearnedSkill] = [
                   "Ein SQL-Injection-Versuch betritt eine Bar. Die Bar antwortet: `400 Bad Request – Security-Filter sei Dank.`"]),
     LearnedSkill("love", "smalltalk", re.compile(r"\b(ich liebe dich|love you|du bist toll|bester bot)\b", re.I),
                  ["Zurück! 🤖💙 Lass uns gemeinsam produktiv bleiben."]),
-    LearnedSkill("preference_style", "preference", re.compile(r"\b(antworte?(n)?\s+(kurz|knapp|detailliert|ausführlich)|halt es kurz|keep it short|more detailed)\b", re.I),
+    LearnedSkill("preference_style", "preference", re.compile(r"\b(antworte?(n)?(\s+bitte|\s+künftig|\s+gerne)*\s+(kurz|knapp|detailliert|ausführlich)|halt es kurz|keep it short|more detailed)\b", re.I),
                  ["Notiert – ich passe meine Antwortlänge entsprechend an und berücksichtige die Präferenz in folgenden Antworten."]),
     LearnedSkill("preference_lang", "preference", re.compile(r"\b(ab jetzt auf (deutsch|english|englisch)|sprich (deutsch|englisch)|switch to (german|english))\b", re.I),
                  ["Gespeichert: Sprachpräferenz übernommen."]),
